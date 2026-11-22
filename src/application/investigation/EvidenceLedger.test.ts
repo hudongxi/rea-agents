@@ -367,3 +367,69 @@ describe("evidence bundle imports", () => {
     expect(ledger.export().records).toEqual([first]);
   });
 });
+
+describe("evidence ledger immutable bundle cache", () => {
+  it("reuses the sealed bundle across reads and invalidates on every mutation", () => {
+    const ledger = new EvidenceLedger();
+    const first = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: {},
+      result: { step: 1 },
+    });
+    const second = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: {},
+      result: { step: 2 },
+    });
+    const initial = ledger.immutableBundle();
+    expect(ledger.immutableBundle()).toBe(initial);
+
+    expect(ledger.record(first).ok).toBe(true);
+    const afterFirst = ledger.immutableBundle();
+    expect(afterFirst).not.toBe(initial);
+    expect(afterFirst.records).toHaveLength(1);
+    expect(ledger.immutableBundle()).toBe(afterFirst);
+
+    const exported = ledger.export();
+    expect(exported).toEqual(afterFirst);
+    expect(exported).not.toBe(afterFirst);
+
+    expect(ledger.import(createEvidenceBundle([second])).ok).toBe(true);
+    const afterImport = ledger.immutableBundle();
+    expect(afterImport).not.toBe(afterFirst);
+    expect(afterImport.records).toHaveLength(2);
+    expect(ledger.immutableBundle()).toBe(afterImport);
+
+    const mutation = createEvidence(TARGET, PROVIDER, {
+      predicateType: "rea.residual-unknown-mutation",
+      operation: "record_unknown",
+      parameters: {},
+      result: { action: "record", question: "Which path?" },
+    });
+    expect(
+      ledger.recordUnknown(
+        recordUnknownInputSchema.parse({
+          question: "Which path?",
+          severity: "low",
+          domain: "fixture",
+          required_authority: null,
+          required_confidence: "derived",
+          required_environment: null,
+          recommended_probes: [],
+          relationships: [],
+        }),
+        mutation,
+      ).ok,
+    ).toBe(true);
+    const afterUnknown = ledger.immutableBundle();
+    expect(afterUnknown).not.toBe(afterImport);
+    expect(afterUnknown.unknowns).toHaveLength(1);
+    expect(ledger.immutableBundle()).toBe(afterUnknown);
+
+    ledger.clear();
+    const afterClear = ledger.immutableBundle();
+    expect(afterClear).not.toBe(afterUnknown);
+    expect(afterClear.records).toEqual([]);
+    expect(afterClear.unknowns).toEqual([]);
+  });
+});

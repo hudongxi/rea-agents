@@ -80,6 +80,7 @@ export class EvidenceLedger {
   #unknownRevisions = new Map<string, ResidualUnknown>();
   #unknownHeads = new Map<string, ResidualUnknown>();
   #recordBytes = new Map<string, number>();
+  #cachedImmutableBundle: EvidenceBundle | undefined;
   readonly #retained: Budget;
   constructor(
     private readonly retentionPolicy: InvestigationRetentionPolicy = {},
@@ -122,6 +123,7 @@ export class EvidenceLedger {
     if (!admitted.ok)
       return err(this.#exposeRefusedEvidence(admitted.error, evidence));
     this.#records.set(evidence.evidence_id, evidence);
+    this.#cachedImmutableBundle = undefined;
     this.#commitAccounting(admitted.value);
     return ok("added");
   }
@@ -186,6 +188,7 @@ export class EvidenceLedger {
       if (!admitted.ok) return admitted;
       for (const evidence of recordChanges.values())
         this.#records.set(evidence.evidence_id, evidence);
+      if (recordChanges.size > 0) this.#cachedImmutableBundle = undefined;
       this.#commitAccounting(admitted.value);
       return ok({
         recordsAdded,
@@ -258,20 +261,15 @@ export class EvidenceLedger {
 
   /** Export records in deterministic, semantically irrelevant ID order. */
   export(): EvidenceBundle {
-    return structuredClone(
-      createEvidenceBundle(
-        [...this.#records.values()],
-        [...this.#unknownRevisions.values()],
-      ),
-    );
+    return structuredClone(this.immutableBundle());
   }
 
   /** Borrow an authenticated immutable bundle without copying its records. */
   immutableBundle(): EvidenceBundle {
-    return createImmutableEvidenceBundle(
+    return (this.#cachedImmutableBundle ??= createImmutableEvidenceBundle(
       [...this.#records.values()],
       [...this.#unknownRevisions.values()],
-    );
+    ));
   }
 
   /** Borrow immutable source records without constructing or hashing a bundle. */
@@ -517,6 +515,7 @@ export class EvidenceLedger {
     this.#unknownHeads.clear();
     this.#retained.restore(0);
     this.#recordBytes.clear();
+    this.#cachedImmutableBundle = undefined;
   }
 
   #appendUnknown(
@@ -572,6 +571,11 @@ export class EvidenceLedger {
       this.#unknownRevisions.set(unknownKey, unknown);
       this.#unknownHeads.set(unknown.unknown_id, unknown);
     }
+    if (
+      additions.size > 0 ||
+      (unknown !== undefined && unknownKey !== undefined)
+    )
+      this.#cachedImmutableBundle = undefined;
     this.#commitAccounting(admitted.value);
     return ok(undefined);
   }
@@ -627,6 +631,7 @@ export class EvidenceLedger {
     this.#records = records;
     this.#unknownRevisions = unknownRevisions;
     this.#unknownHeads = unknownHeads;
+    this.#cachedImmutableBundle = bundle;
   }
 
   #readEvidence(
